@@ -49,7 +49,6 @@ def handle_message(update: Update, context: CallbackContext):
     user_name = update.message.from_user.first_name
     text = update.message.text.strip().lower()
 
-    # --- Обробка вибору звіту ---
     if report_state.get(user_id) == "waiting_for_period":
         del report_state[user_id]
         if text == "з початку місяця":
@@ -85,7 +84,7 @@ def handle_message(update: Update, context: CallbackContext):
 
         amount = float(state["amount"])
         if category != "прихід":
-            amount *= -1  # витрата
+            amount *= -1
 
         sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), user_name, amount, category, ""])
         update.message.reply_text(f"📂 {abs(amount)} грн записано в '{category}'")
@@ -102,7 +101,6 @@ def handle_message(update: Update, context: CallbackContext):
         pending_state.pop(user_id)
         return
 
-    # Якщо повідомлення тільки число — чекаємо категорію
     if text.replace(".", "", 1).isdigit():
         pending_state[user_id] = {"step": "await_category", "amount": text}
         keyboard = [[c] for c in CATEGORY_MAP.keys()]
@@ -120,9 +118,10 @@ def report_command(update: Update, context: CallbackContext):
 
 # --- Надсилання звіту ---
 def send_report(update, start_date, end_date):
-    rows = sheet.get_all_values()[1:]  # Пропускаємо заголовок
-    summary = defaultdict(float)
-    total = 0
+    rows = sheet.get_all_values()[1:]
+    summary = defaultdict(lambda: defaultdict(float))
+    total_income = 0
+    total_expense = 0
 
     for row in rows:
         if len(row) < 5:
@@ -141,19 +140,23 @@ def send_report(update, start_date, end_date):
         except ValueError:
             continue
 
-        key = f"{category} > {subcat}" if subcat else category
-        summary[key] += amount_val
-        total += amount_val
+        if amount_val >= 0:
+            total_income += amount_val
+        else:
+            summary[category][subcat or ""] += amount_val
+            total_expense += amount_val
 
-    if not summary:
-        update.message.reply_text("За обраний період не знайдено витрат", reply_markup=ReplyKeyboardRemove())
-        return
+    lines = [f"📊 Звіт з {start_date.strftime('%Y-%m-%d')} по {end_date.strftime('%Y-%m-%d')}", f"Прихід: {total_income:.2f} грн", ""]
+    for cat, subs in sorted(summary.items(), key=lambda x: sum(x[1].values())):
+        cat_total = sum(subs.values())
+        lines.append(f"*{cat.title()}*: {abs(cat_total):.2f} грн")
+        for sub, val in subs.items():
+            if sub:
+                lines.append(f"  - {sub}: {abs(val):.2f} грн")
+        lines.append("")
+    lines.append(f"Підсумок: {total_income + total_expense:.2f} грн")
 
-    lines = [f"📊 Звіт з {start_date.strftime('%Y-%m-%d')} по {end_date.strftime('%Y-%m-%d')}", f"Загалом: {total:.2f} грн"]
-    for cat, amt in sorted(summary.items(), key=lambda x: -x[1]):
-        lines.append(f"• {cat}: {amt:.2f} грн")
-
-    update.message.reply_text("\n".join(lines), reply_markup=ReplyKeyboardRemove())
+    update.message.reply_text("\n".join(lines), reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
 # --- Запуск ---
 updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
