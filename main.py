@@ -9,6 +9,7 @@ import os
 config = {
     "bot_token": os.environ["BOT_TOKEN"],
     "spreadsheet_id": os.environ["SPREADSHEET_ID"]
+}
 
 bot_token = config["bot_token"]
 spreadsheet_id = config["spreadsheet_id"]
