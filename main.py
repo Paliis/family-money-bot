@@ -16,7 +16,10 @@ spreadsheet_id = config["spreadsheet_id"]
 
 # Підключення до Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+import json
+
+google_creds = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(spreadsheet_id).sheet1
 
