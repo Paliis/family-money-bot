@@ -3,6 +3,7 @@ import yaml
 import gspread
 import os
 import json
+import base64
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
 
@@ -15,9 +16,13 @@ config = {
 bot_token = config["bot_token"]
 spreadsheet_id = config["spreadsheet_id"]
 
+# Декодуємо base64 credentials
+google_creds_b64 = os.environ["GOOGLE_CREDS_B64"]
+google_creds_json = base64.b64decode(google_creds_b64).decode("utf-8")
+google_creds = json.loads(google_creds_json)
+
 # Підключення до Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-google_creds = json.loads(os.environ["GOOGLE_CREDS_JSON"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(spreadsheet_id).sheet1
