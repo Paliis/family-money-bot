@@ -18,7 +18,7 @@ spreadsheet_id = config["spreadsheet_id"]
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 import json
 
-google_creds = json.loads(os.environ["GOOGLE_CREDS_JSON"])
+google_creds = json.loads(os.environ["GOOGLE_CREDS_JSON"].replace("\\n", "\n"))
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(spreadsheet_id).sheet1
