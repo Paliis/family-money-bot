@@ -1,12 +1,11 @@
 from telegram.ext import Updater, MessageHandler, Filters
-import yaml
 import gspread
 import os
 import json
 import base64
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Завантажуємо конфіг
+# Завантажуємо змінні з оточення
 bot_token = os.environ["BOT_TOKEN"]
 spreadsheet_id = os.environ["SPREADSHEET_ID"]
 google_creds_b64 = os.environ["GOOGLE_CREDS_B64"]
@@ -33,4 +32,14 @@ def handle_message(update, context):
     try:
         amount, category = text.split(" ", 1)
         sheet.append_row([user, amount, category])
-        update.message.reply_text(f"💾 Записав {amount} грн у категорію '{category}'_
+        update.message.reply_text(f"💾 Записав {amount} грн у категорію '{category}'")
+    except:
+        update.message.reply_text("Не зміг розпізнати. Спробуй у форматі '1000 продукти'")
+
+# Запуск бота
+updater = Updater(bot_token, use_context=True)
+dp = updater.dispatcher
+dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+updater.start_polling()
+print("✅ Бот працює")
+updater.idle()
