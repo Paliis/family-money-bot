@@ -1,22 +1,22 @@
 from telegram.ext import Updater, MessageHandler, Filters
-import os
-import json
+import yaml
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import os
+import json
 
 # Завантажуємо конфіг
-bot_token = os.environ["BOT_TOKEN"]
-spreadsheet_id = os.environ["SPREADSHEET_ID"]
+config = {
+    "bot_token": os.environ["BOT_TOKEN"],
+    "spreadsheet_id": os.environ["SPREADSHEET_ID"]
+}
 
-# Обробка credentials
-google_creds_raw = os.environ["GOOGLE_CREDS_JSON"]
-google_creds = json.loads(google_creds_raw.replace('\\n', '\n'))
+bot_token = config["bot_token"]
+spreadsheet_id = config["spreadsheet_id"]
 
 # Підключення до Google Sheets
-scope = [
-    "https://spreadsheets.google.com/feeds",
-    "https://www.googleapis.com/auth/drive"
-]
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+google_creds = json.loads(os.environ["GOOGLE_CREDS_JSON"])
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(spreadsheet_id).sheet1
