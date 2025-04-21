@@ -111,7 +111,7 @@ def handle_message(update: Update, context: CallbackContext):
 
     update.message.reply_text("🧠 Напиши суму, наприклад '1000'")
 
-# --- Команда /звіт ---
+# --- Команда /report ---
 def report_command(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     report_state[user_id] = "waiting_for_period"
@@ -158,7 +158,7 @@ def send_report(update, start_date, end_date):
 # --- Запуск ---
 updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
 dp = updater.dispatcher
-dp.add_handler(CommandHandler("звіт", report_command))
+dp.add_handler(CommandHandler("report", report_command))
 dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 updater.start_polling()
 print("✅ FamilyMoneyBot працює")
