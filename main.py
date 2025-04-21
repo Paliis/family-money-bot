@@ -1,11 +1,11 @@
 from telegram.ext import Updater, MessageHandler, Filters
 import yaml
 import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import os
 import json
-import base64
-from datetime import datetime
-from oauth2client.service_account import ServiceAccountCredentials
+import datetime
+import random
 
 # Завантажуємо конфіг
 config = {
@@ -16,34 +16,54 @@ config = {
 bot_token = config["bot_token"]
 spreadsheet_id = config["spreadsheet_id"]
 
-# Декодуємо base64 credentials
-google_creds_b64 = os.environ["GOOGLE_CREDS_B64"]
-google_creds_json = base64.b64decode(google_creds_b64).decode("utf-8")
-google_creds = json.loads(google_creds_json)
-
 # Підключення до Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+google_creds_raw = os.environ["GOOGLE_CREDS_JSON"]
+google_creds = json.loads(google_creds_raw)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(spreadsheet_id).sheet1
 
 # Обробник повідомлень
 def handle_message(update, context):
-    text = update.message.text
+    text = update.message.text.strip()
     chat_id = update.message.chat_id
     user = update.message.from_user.first_name
+    date = datetime.datetime.now().strftime("%d.%m.%Y %H:%M")
 
-    if text.replace(" ", "").isdigit():
-        update.message.reply_text("Схоже, ти просто надіслав цифри 🤔 Спробуй '1000 продукти'")
+    # Знаходимо суму (перше число в тексті)
+    words = text.split()
+    amount = None
+    for word in words:
+        if word.replace('.', '', 1).isdigit():
+            amount = word
+            break
+
+    if not amount:
+        update.message.reply_text("Не бачу суму. Напиши щось типу '100 продукти' або 'продукти 100'")
         return
 
-    try:
-        amount, category = text.split(" ", 1)
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-        sheet.append_row([timestamp, user, amount, category])
-        update.message.reply_text(f"💾 Записав {amount} грн у категорію '{category}'")
-    except:
-        update.message.reply_text("Не зміг розпізнати. Спробуй у форматі '1000 продукти'")
+    # Видаляємо суму і залишаємо категорію
+    category_words = [w for w in words if w != amount]
+    category = " ".join(category_words).strip().lower()
+
+    if not category:
+        update.message.reply_text("Не бачу категорію. Напиши щось типу '100 кава' або 'продукти 50'")
+        return
+
+    # Запис у таблицю
+    sheet.append_row([date, user, amount, category])
+
+    # Мемна відповідь
+    reply_options = [
+        f"💾 Записав {amount} грн у категорію '{category}'",
+        f"Та легко! {amount} грн пішло в '{category}'",
+        f"Гроші летять! {amount} грн → '{category}'",
+        f"Фіксанув: {amount} на '{category}'. Тримайся, бюджет!",
+        f"Це ти потратив {amount} на '{category}'? Бюджет не одобрює, але записав.",
+        f"Бухгалтер спить, бот працює. {amount} грн на '{category}'"
+    ]
+    update.message.reply_text(random.choice(reply_options))
 
 # Запуск бота
 updater = Updater(bot_token, use_context=True)
