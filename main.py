@@ -5,8 +5,10 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
 # Завантажуємо конфіг
-with open("config.yaml") as f:
-    config = yaml.safe_load(f)
+import os
+config = {
+    "bot_token": os.environ["BOT_TOKEN"],
+    "spreadsheet_id": os.environ["SPREADSHEET_ID"]
 
 bot_token = config["bot_token"]
 spreadsheet_id = config["spreadsheet_id"]
