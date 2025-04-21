@@ -3,9 +3,9 @@ from telegram.ext import Updater, MessageHandler, Filters, CallbackContext
 import os
 import json
 import gspread
-import base64
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import base64
 
 # --- Категорії та підкатегорії ---
 CATEGORY_MAP = {
@@ -32,14 +32,13 @@ CATEGORY_MAP = {
 
 # --- Google Sheets ---
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-google_creds_b64 = os.environ["GOOGLE_CREDS_B64"]
-google_creds_raw = base64.b64decode(google_creds_b64).decode("utf-8")
+google_creds_raw = base64.b64decode(os.environ["GOOGLE_CREDS_B64"]).decode("utf-8")
 google_creds = json.loads(google_creds_raw)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
 
-pending_categories = {}  # chat_id: (amount, category)
+pending_state = {}  # chat_id: {step, amount, category}
 
 # --- Обробник ---
 def handle_message(update: Update, context: CallbackContext):
@@ -47,45 +46,38 @@ def handle_message(update: Update, context: CallbackContext):
     user = update.message.from_user.first_name
     text = update.message.text.strip().lower()
 
-    if chat_id in pending_categories:
-        amount, main_category = pending_categories.pop(chat_id)
-        subcat = text
-        sheet.append_row([datetime.now().isoformat(), user, amount, main_category, subcat])
-        update.message.reply_text(f"📂 {amount} грн записано в '{main_category} > {subcat}'")
+    state = pending_state.get(chat_id, {})
+
+    if state.get("step") == "await_category":
+        category = text
+        if category not in CATEGORY_MAP:
+            keyboard = [[c] for c in CATEGORY_MAP.keys()]
+            update.message.reply_text("Вибери категорію з кнопок:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
+            return
+        if CATEGORY_MAP[category]:
+            pending_state[chat_id] = {"step": "await_subcategory", "amount": state["amount"], "category": category}
+            subcat_keyboard = [[s] for s in CATEGORY_MAP[category]]
+            update.message.reply_text(f"'{category}' має підкатегорії. Обери одну:", reply_markup=ReplyKeyboardMarkup(subcat_keyboard, one_time_keyboard=True, resize_keyboard=True))
+            return
+        sheet.append_row([datetime.now().isoformat(), user, state["amount"], category, ""])
+        update.message.reply_text(f"📂 {state['amount']} грн записано в '{category}'")
+        pending_state.pop(chat_id)
         return
 
-    parts = text.split(" ", 1)
-    if len(parts) != 2 or not parts[0].replace(".", "", 1).isdigit():
-        update.message.reply_text("🤖 Формат має бути типу '100 продукти'")
+    if state.get("step") == "await_subcategory":
+        sheet.append_row([datetime.now().isoformat(), user, state["amount"], state["category"], text])
+        update.message.reply_text(f"📂 {state['amount']} грн записано в '{state['category']} > {text}'")
+        pending_state.pop(chat_id)
         return
 
-    amount, category = parts[0], parts[1]
-
-    # Пошук категорії (точне або часткове співпадіння)
-    found_category = None
-    for cat in CATEGORY_MAP:
-        if category == cat or category.startswith(cat):
-            found_category = cat
-            break
-
-    if not found_category:
+    # Якщо повідомлення тільки число — чекаємо категорію
+    if text.replace(".", "", 1).isdigit():
+        pending_state[chat_id] = {"step": "await_category", "amount": text}
         keyboard = [[c] for c in CATEGORY_MAP.keys()]
-        update.message.reply_text(
-            f"Не знаю категорію '{category}'. Обери з меню:",
-            reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
+        update.message.reply_text("Окей, тепер обери категорію:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
         return
 
-    if CATEGORY_MAP[found_category]:
-        pending_categories[chat_id] = (amount, found_category)
-        subcat_keyboard = [[s] for s in CATEGORY_MAP[found_category]]
-        update.message.reply_text(
-            f"'{found_category}' має підкатегорії. Обери одну:",
-            reply_markup=ReplyKeyboardMarkup(subcat_keyboard, one_time_keyboard=True, resize_keyboard=True)
-        )
-    else:
-        sheet.append_row([datetime.now().isoformat(), user, amount, found_category, ""])
-        update.message.reply_text(f"📂 {amount} грн записано в '{found_category}'")
+    update.message.reply_text("🤖 Напиши суму, наприклад '1000'")
 
 # --- Запуск ---
 updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
