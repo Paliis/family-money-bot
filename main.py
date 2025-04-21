@@ -1,6 +1,5 @@
 
 from telegram.ext import Updater, MessageHandler, Filters
-import yaml
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 
