@@ -41,9 +41,9 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
 limits_sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).worksheet("Ліміти")
 
-pending_state = {}  # user_id: {step, amount, category}
-report_state = {}   # user_id: waiting_for_report_range
-limit_state = {}    # user_id: step / category
+pending_state = {}
+report_state = {}
+limit_state = {}
 
 # --- Витрачено по категорії ---
 def get_spent_in_category_this_month(category):
@@ -63,7 +63,7 @@ def get_spent_in_category_this_month(category):
             continue
     return total
 
-# --- Обробник витрат ---
+# --- Обробник повідомлень ---
 def handle_message(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     user_name = update.message.from_user.first_name
@@ -106,7 +106,6 @@ def handle_message(update: Update, context: CallbackContext):
         if category != "прихід":
             amount *= -1
 
-        # --- перевірка ліміту ---
         limits_raw = limits_sheet.get_all_values()
         limits = {row[0]: float(row[1]) for row in limits_raw if len(row) >= 2}
         spent = get_spent_in_category_this_month(category)
@@ -128,7 +127,6 @@ def handle_message(update: Update, context: CallbackContext):
         if state["category"] != "прихід":
             amount *= -1
 
-        # --- перевірка ліміту ---
         limits_raw = limits_sheet.get_all_values()
         limits = {row[0]: float(row[1]) for row in limits_raw if len(row) >= 2}
         spent = get_spent_in_category_this_month(state["category"])
@@ -152,3 +150,20 @@ def handle_message(update: Update, context: CallbackContext):
         return
 
     update.message.reply_text("🧠 Напиши суму, наприклад '1000'")
+
+# --- /ping перевірка ---
+def ping(update: Update, context: CallbackContext):
+    update.message.reply_text("✅ Я живий!")
+
+# --- Заглушка звіту ---
+def send_report(update: Update, start, end):
+    update.message.reply_text(f"📊 (Тут буде звіт з {start.date()} до {end.date()})")
+
+# --- Запуск бота ---
+updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
+dp = updater.dispatcher
+dp.add_handler(CommandHandler("ping", ping))
+dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+updater.start_polling()
+print("✅ FamilyMoneyBot запущено")
+updater.idle()
