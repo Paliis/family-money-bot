@@ -118,7 +118,11 @@ def report_command(update: Update, context: CallbackContext):
 
 # --- Команда /start ---
 def start_command(update: Update, context: CallbackContext):
-    update.message.reply_text("👋 Привіт! Я FamilyMoneyBot. Надішли суму, щоб розпочати.")
+    keyboard = [["/report"], ["/ping"]]
+    update.message.reply_text(
+        "👋 Привіт! Я FamilyMoneyBot. Надішли суму, щоб розпочати або скористайся кнопками:",
+        reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
+    )
 
 # --- Команда /ping ---
 def ping_command(update: Update, context: CallbackContext):
@@ -169,10 +173,58 @@ def send_report(update, start_date, end_date):
 # --- Запуск ---
 updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
 dp = updater.dispatcher
+
+# --- Команда /setlimit ---
+limit_state = {}  # user_id: step / category
+limits_sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).worksheet("Ліміти")
+
+def setlimit_command(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    limit_state[user_id] = "await_category"
+    keyboard = [[c] for c in CATEGORY_MAP.keys() if c != "прихід"]
+    update.message.reply_text("🔧 Вибери категорію, для якої хочеш задати ліміт:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
+
+def handle_limit(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    text = update.message.text.strip().lower()
+
+    if user_id not in limit_state:
+        return False
+
+    current = limit_state[user_id]
+
+    if current == "await_category":
+        if text not in CATEGORY_MAP or text == "прихід":
+            update.message.reply_text("❌ Невірна категорія. Спробуй ще раз.")
+            return True
+        limit_state[user_id] = text
+        update.message.reply_text(f"🧮 Введи ліміт для категорії '{text}':", reply_markup=ReplyKeyboardRemove())
+        return True
+
+    elif isinstance(current, str) and current in CATEGORY_MAP:
+        try:
+            amount = float(text)
+            found = False
+            all_rows = limits_sheet.get_all_values()
+            for idx, row in enumerate(all_rows):
+                if row and row[0] == current:
+                    limits_sheet.update_cell(idx + 1, 2, amount)
+                    found = True
+                    break
+            if not found:
+                limits_sheet.append_row([current, amount])
+            update.message.reply_text(f"✅ Ліміт {amount} грн встановлено для категорії '{current}'")
+            limit_state.pop(user_id)
+        except:
+            update.message.reply_text("❌ Введи число, наприклад: 10000")
+        return True
+
+    return False
 dp.add_handler(CommandHandler("start", start_command))
 dp.add_handler(CommandHandler("ping", ping_command))
 dp.add_handler(CommandHandler("report", report_command))
-dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+dp.add_handler(CommandHandler("setlimit", setlimit_command))
+dp.add_handler(MessageHandler(Filters.text & ~Filters.command, lambda u, c: handle_limit(u, c) or handle_message(u, c)))
 updater.start_polling()
 print("✅ FamilyMoneyBot працює")
 updater.idle()
