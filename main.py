@@ -120,8 +120,7 @@ def handle_message(update: Update, context: CallbackContext):
         limit = limits.get(category)
         limit_msg = ""
         if limit and (spent + abs(amount)) > limit:
-            limit_msg = f"⚠️ Перевищено ліміт {limit} грн у категорії '{category}' (вже витрачено: {spent + abs(amount):.2f} грн)
-"
+           limit_msg = f"⚠️ Перевищено ліміт {limit} грн у категорії '{category}' (вже витрачено: {spent + abs(amount):.2f} грн)"
             closing = "😬 Будь уважним(-ою) з витратами!"
         else:
             closing = "💪 Гарна робота!"
