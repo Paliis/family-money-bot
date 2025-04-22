@@ -87,7 +87,7 @@ def handle_message(update: Update, context: CallbackContext):
             amount *= -1
 
         sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), user_name, amount, category, ""])
-        update.message.reply_text(f"📂 {abs(amount)} грн записано в '{category}'")
+        update.message.reply_text(f"💸 Зафіксував {abs(amount)} грн у *\1*! Гарна робота! 💪", parse_mode="Markdown")
         pending_state.pop(user_id)
         return
 
@@ -97,7 +97,7 @@ def handle_message(update: Update, context: CallbackContext):
             amount *= -1
 
         sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), user_name, amount, state["category"], text])
-        update.message.reply_text(f"📂 {abs(amount)} грн записано в '{state['category']} > {text}'")
+        update.message.reply_text(f"💸 Записав {abs(amount)} грн у *{state['category']} > {text}*. Рухаємось далі! 🚀", parse_mode="Markdown")
         pending_state.pop(user_id)
         return
 
