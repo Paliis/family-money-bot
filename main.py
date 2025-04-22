@@ -39,9 +39,29 @@ google_creds = json.loads(google_creds_raw)
 creds = ServiceAccountCredentials.from_json_keyfile_dict(google_creds, scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
+limits_sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).worksheet("Ліміти")
 
 pending_state = {}  # user_id: {step, amount, category}
 report_state = {}   # user_id: waiting_for_report_range
+limit_state = {}    # user_id: step / category
+
+# --- Витрачено по категорії ---
+def get_spent_in_category_this_month(category):
+    rows = sheet.get_all_values()[1:]
+    total = 0
+    for row in rows:
+        if len(row) < 4 or row[3] != category:
+            continue
+        try:
+            dt = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
+            if dt < datetime.now().replace(day=1):
+                continue
+            val = float(row[2])
+            if val < 0:
+                total += abs(val)
+        except:
+            continue
+    return total
 
 # --- Обробник витрат ---
 def handle_message(update: Update, context: CallbackContext):
@@ -86,8 +106,17 @@ def handle_message(update: Update, context: CallbackContext):
         if category != "прихід":
             amount *= -1
 
+        # --- перевірка ліміту ---
+        limits_raw = limits_sheet.get_all_values()
+        limits = {row[0]: float(row[1]) for row in limits_raw if len(row) >= 2}
+        spent = get_spent_in_category_this_month(category)
+        limit = limits.get(category)
+        limit_msg = ""
+        if limit and (spent + abs(amount)) > limit:
+            limit_msg = f"⚠️ Перевищено ліміт {limit} грн у категорії '{category}' (вже витрачено: {spent + abs(amount):.2f} грн)\n"
+
         sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), user_name, amount, category, ""])
-        update.message.reply_text(f"💸 Зафіксував {abs(amount)} грн у *\1*! Гарна робота! 💪", parse_mode="Markdown")
+        update.message.reply_text(f"{limit_msg}💸 Зафіксував {abs(amount)} грн у *{category}*. Гарна робота! 💪", parse_mode="Markdown")
         pending_state.pop(user_id)
         return
 
@@ -96,8 +125,17 @@ def handle_message(update: Update, context: CallbackContext):
         if state["category"] != "прихід":
             amount *= -1
 
+        # --- перевірка ліміту ---
+        limits_raw = limits_sheet.get_all_values()
+        limits = {row[0]: float(row[1]) for row in limits_raw if len(row) >= 2}
+        spent = get_spent_in_category_this_month(state["category"])
+        limit = limits.get(state["category"])
+        limit_msg = ""
+        if limit and (spent + abs(amount)) > limit:
+            limit_msg = f"⚠️ Перевищено ліміт {limit} грн у категорії '{state['category']}' (вже витрачено: {spent + abs(amount):.2f} грн)\n"
+
         sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), user_name, amount, state["category"], text])
-        update.message.reply_text(f"💸 Записав {abs(amount)} грн у *{state['category']} > {text}*. Рухаємось далі! 🚀", parse_mode="Markdown")
+        update.message.reply_text(f"{limit_msg}💸 Записав {abs(amount)} грн у *{state['category']} > {text}*. Рухаємось далі! 🚀", parse_mode="Markdown")
         pending_state.pop(user_id)
         return
 
@@ -170,14 +208,7 @@ def send_report(update, start_date, end_date):
 
     update.message.reply_text("\n".join(lines), reply_markup=ReplyKeyboardRemove(), parse_mode="Markdown")
 
-# --- Запуск ---
-updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
-dp = updater.dispatcher
-
 # --- Команда /setlimit ---
-limit_state = {}  # user_id: step / category
-limits_sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).worksheet("Ліміти")
-
 def setlimit_command(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     limit_state[user_id] = "await_category"
@@ -220,11 +251,17 @@ def handle_limit(update: Update, context: CallbackContext):
         return True
 
     return False
+
+# --- Запуск ---
+updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
+dp = updater.dispatcher
+
 dp.add_handler(CommandHandler("start", start_command))
 dp.add_handler(CommandHandler("ping", ping_command))
 dp.add_handler(CommandHandler("report", report_command))
 dp.add_handler(CommandHandler("setlimit", setlimit_command))
 dp.add_handler(MessageHandler(Filters.text & ~Filters.command, lambda u, c: handle_limit(u, c) or handle_message(u, c)))
+
 updater.start_polling()
 print("✅ FamilyMoneyBot працює")
 updater.idle()
