@@ -116,6 +116,14 @@ def report_command(update: Update, context: CallbackContext):
     keyboard = [["З початку місяця"], ["Від ЗП"], ["Від 2025-04-01"]]
     update.message.reply_text("📅 Обери період звіту:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
 
+# --- Команда /start ---
+def start_command(update: Update, context: CallbackContext):
+    update.message.reply_text("👋 Привіт! Я FamilyMoneyBot. Надішли суму, щоб розпочати.")
+
+# --- Команда /ping ---
+def ping_command(update: Update, context: CallbackContext):
+    update.message.reply_text("✅ Бот активний")
+
 # --- Надсилання звіту ---
 def send_report(update, start_date, end_date):
     rows = sheet.get_all_values()[1:]
@@ -161,6 +169,8 @@ def send_report(update, start_date, end_date):
 # --- Запуск ---
 updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
 dp = updater.dispatcher
+dp.add_handler(CommandHandler("start", start_command))
+dp.add_handler(CommandHandler("ping", ping_command))
 dp.add_handler(CommandHandler("report", report_command))
 dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
 updater.start_polling()
