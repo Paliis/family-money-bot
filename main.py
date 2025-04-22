@@ -1,14 +1,13 @@
-
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram.ext import Updater, MessageHandler, Filters, CallbackContext, CommandHandler
 import os
 import json
 import gspread
-import base64
-from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
+from datetime import datetime, timedelta
+import base64
 
-# Категорії
+# ========== КАТЕГОРІЇ ==========
 CATEGORY_MAP = {
     "продукти": [],
     "господарські товари": [],
@@ -32,7 +31,7 @@ CATEGORY_MAP = {
     "прихід": []
 }
 
-# Підключення до Google Sheets
+# ========== GOOGLE SHEETS ==========
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 google_creds_raw = base64.b64decode(os.environ["GOOGLE_CREDS_B64"]).decode("utf-8")
 google_creds = json.loads(google_creds_raw)
@@ -41,10 +40,12 @@ client = gspread.authorize(creds)
 sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).sheet1
 limits_sheet = client.open_by_key(os.environ["SPREADSHEET_ID"]).worksheet("Ліміти")
 
+# ========== СТАНИ ==========
 pending_state = {}  # user_id: {step, amount, category}
-report_state = {}
-last_salary_date = {}
+report_state = {}   # user_id: waiting_for_report_range
+salary_dates = {}   # user_id: datetime of last salary
 
+# ========== ДОПОМОЖНІ ==========
 def get_spent_in_category_this_month(category):
     rows = sheet.get_all_values()[1:]
     total = 0
@@ -55,132 +56,151 @@ def get_spent_in_category_this_month(category):
             dt = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
             if dt < datetime.now().replace(day=1):
                 continue
-            amount = float(row[2])
-            if amount < 0:
-                total += abs(amount)
+            val = float(row[2])
+            if val < 0:
+                total += abs(val)
         except:
             continue
     return total
 
 def send_report(update, start, end):
     rows = sheet.get_all_values()[1:]
-    income = 0
-    expenses = {}
+    totals = {}
+    incoming = 0
     for row in rows:
         try:
             dt = datetime.strptime(row[0], "%Y-%m-%d %H:%M")
-            if not (start <= dt <= end): continue
+            if not (start <= dt <= end):
+                continue
             amount = float(row[2])
             category = row[3]
             subcat = row[4] if len(row) > 4 else ""
+
             if category == "прихід":
-                income += amount
-            else:
-                expenses.setdefault(category, {}).setdefault(subcat, 0)
-                expenses[category][subcat] += amount
+                incoming += amount
+                continue
+
+            key = (category, subcat)
+            totals[key] = totals.get(key, 0) + amount
         except:
             continue
 
-    result = f"📊 Звіт з {start.strftime('%Y-%m-%d')} по {end.strftime('%Y-%m-%d')}
+    result = f"📊 Звіт з {start.strftime('%Y-%m-%d')} по {end.strftime('%Y-%m-%d')}\n"
+    result += f"\n💰 Прихід: *{incoming:.2f} грн*\n"
+    categories = {}
+    for (cat, subcat), amount in totals.items():
+        categories.setdefault(cat, []).append((subcat, amount))
 
-"
-    result += f"💰 Прихід: *{income:.2f} грн*
+    sorted_cats = sorted(categories.items(), key=lambda i: sum(x[1] for x in i[1]), reverse=True)
+    for cat, items in sorted_cats:
+        total = sum(x[1] for x in items)
+        result += f"\n*{cat}*: {abs(total):.2f} грн\n"
+        for subcat, amount in items:
+            if subcat:
+                result += f"  - {subcat}: {abs(amount):.2f} грн\n"
 
-"
-    total_exp = 0
-    for cat, subcats in sorted(expenses.items(), key=lambda x: sum(x[1].values()), reverse=True):
-        cat_total = sum(subcats.values())
-        total_exp += abs(cat_total)
-        result += f"*{cat}*: {abs(cat_total):.2f} грн
-"
-        for sub, val in subcats.items():
-            if sub:
-                result += f"  └ {sub}: {abs(val):.2f} грн
-"
-        result += "
-"
-    balance = income + sum(sum(v.values()) for v in expenses.values())
-    result += f"📉 Баланс: *{balance:.2f} грн*"
+    net = incoming + sum(sum(x[1] for x in v) for v in categories.values())
+    result += f"\n📉 Баланс: *{net:.2f} грн*"
     update.message.reply_text(result, parse_mode="Markdown")
 
+# ========== ХЕНДЛЕРИ ==========
 def handle_message(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
-    name = update.message.from_user.first_name
-    text = update.message.text.lower().strip()
+    user_name = update.message.from_user.first_name
+    text = update.message.text.strip().lower()
 
     if report_state.get(user_id) == "waiting_for_period":
         del report_state[user_id]
-        now = datetime.now()
         if text == "з початку місяця":
-            return send_report(update, now.replace(day=1), now)
+            return send_report(update, datetime.now().replace(day=1), datetime.now())
         elif text == "від зп":
-            if user_id in last_salary_date:
-                return send_report(update, last_salary_date[user_id], now)
-            update.message.reply_text("❌ Дата останньої ЗП невідома. Скористайся /salary")
-            return
+            if user_id in salary_dates:
+                return send_report(update, salary_dates[user_id], datetime.now())
+            else:
+                update.message.reply_text("🔔 Дата останньої ЗП не вказана. Використай /salary")
+                return
         elif text.startswith("від "):
             try:
-                dt = datetime.strptime(text.replace("від ", ""), "%Y-%m-%d")
-                return send_report(update, dt, now)
+                start = datetime.strptime(text.replace("від ", ""), "%Y-%m-%d")
+                return send_report(update, start, datetime.now())
             except:
-                update.message.reply_text("📅 Формат дати: від 2025-04-01")
+                update.message.reply_text("📅 Формат: від 2025-04-01")
                 return
 
     state = pending_state.get(user_id, {})
+
     if state.get("step") == "await_category":
-        cat = text
-        if cat not in CATEGORY_MAP:
-            keyboard = [[c] for c in CATEGORY_MAP.keys()]
-            update.message.reply_text("Обери категорію:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+        category = text
+        if category not in CATEGORY_MAP:
+            keyboard = [[c] for c in CATEGORY_MAP]
+            update.message.reply_text("Вибери категорію з кнопок:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
             return
-        if CATEGORY_MAP[cat]:
-            pending_state[user_id] = {"step": "await_subcategory", "amount": state["amount"], "category": cat}
-            subs = [[s] for s in CATEGORY_MAP[cat]]
-            update.message.reply_text(f"'{cat}' має підкатегорії. Обери:", reply_markup=ReplyKeyboardMarkup(subs, resize_keyboard=True, one_time_keyboard=True))
+        if CATEGORY_MAP[category]:
+            pending_state[user_id] = {"step": "await_subcategory", "amount": state["amount"], "category": category}
+            subcats = [[s] for s in CATEGORY_MAP[category]]
+            update.message.reply_text(f"'{category}' має підкатегорії. Обери одну:", reply_markup=ReplyKeyboardMarkup(subcats, one_time_keyboard=True, resize_keyboard=True))
             return
-        return save_transaction(update, name, float(state["amount"]), cat, "", user_id)
+
+        return save_expense(update, user_name, user_id, float(state["amount"]), category, "")
 
     if state.get("step") == "await_subcategory":
-        return save_transaction(update, name, float(state["amount"]), state["category"], text, user_id)
+        return save_expense(update, user_name, user_id, float(state["amount"]), state["category"], text)
 
     if text.replace(".", "", 1).isdigit():
         pending_state[user_id] = {"step": "await_category", "amount": text}
-        keyboard = [[c] for c in CATEGORY_MAP.keys()]
-        update.message.reply_text("Окей, тепер обери категорію:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+        keyboard = [[c] for c in CATEGORY_MAP]
+        update.message.reply_text("Окей, тепер обери категорію:", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
         return
 
-    update.message.reply_text("🧠 Напиши суму або використай команду")
+    update.message.reply_text("🧠 Напиши суму, наприклад '1000'")
 
-def save_transaction(update, user_name, amount, category, subcat, user_id):
-    is_income = category == "прихід"
-    value = amount if is_income else -amount
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+def save_expense(update, user_name, user_id, amount, category, subcat):
+    if category != "прихід":
+        amount *= -1
 
     spent = get_spent_in_category_this_month(category)
-    limits = {row[0]: float(row[1]) for row in limits_sheet.get_all_values() if len(row) >= 2}
+    limits = {row[0]: float(row[1]) for row in limits_sheet.get_all_values() if len(row) > 1}
     limit = limits.get(category)
-    limit_msg, closing = "", "💪 Гарна робота!"
-
-    if limit and not is_income and (spent + abs(value)) > limit:
-        limit_msg = f"⚠️ Перевищено ліміт {limit} грн у категорії '{category}' (вже витрачено: {spent + abs(value):.2f} грн)
-"
+    if limit and (spent + abs(amount)) > limit:
+        limit_msg = f"⚠️ Перевищено ліміт {limit} грн у категорії '{category}' (вже витрачено: {spent + abs(amount):.2f} грн)\n"
         closing = "😬 Будь уважним(-ою) з витратами!"
+    else:
+        limit_msg = ""
+        closing = "💪 Гарна робота!"
 
-    sheet.append_row([now, user_name, value, category, subcat])
-    pending_state.pop(user_id, None)
+    sheet.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), user_name, amount, category, subcat])
+    sub_info = f" > {subcat}" if subcat else ""
+    update.message.reply_text(f"{limit_msg}💸 Зафіксував {abs(amount)} грн у *{category}{sub_info}*. {closing}", parse_mode="Markdown")
+    pending_state.pop(user_id)
 
-    if is_income:
-        last_salary_date[user_id] = datetime.now()
-
-    suffix = f"*{category}*" if not subcat else f"*{category} > {subcat}*"
-    update.message.reply_text(f"{limit_msg}💸 Зафіксував {abs(value)} грн у {suffix}. {closing}", parse_mode="Markdown")
-
-def report(update: Update, context: CallbackContext):
+def report_command(update: Update, context: CallbackContext):
     user_id = update.message.from_user.id
     report_state[user_id] = "waiting_for_period"
-    now = datetime.now().strftime("%Y-%m-%d")
-    keyboard = [["з початку місяця"], ["від ЗП"], [f"від {now}"]]
-    update.message.reply_text("За який період зробити звіт?", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=True))
+    now = datetime.now()
+    keyboard = [
+        ["з початку місяця"],
+        ["від ЗП"],
+        [f"від {now.strftime('%Y-%m-%d')}"]
+    ]
+    update.message.reply_text("За який період зробити звіт?", reply_markup=ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True))
+
+def salary_command(update: Update, context: CallbackContext):
+    user_id = update.message.from_user.id
+    user_name = update.message.from_user.first_name
+    now = datetime.now()
+    sheet.append_row([now.strftime("%Y-%m-%d %H:%M"), user_name, 0.01, "прихід", "зарплата"])
+    salary_dates[user_id] = now
+    update.message.reply_text("✅ ЗП збережена як прихід. Тепер можеш генерувати звіти від ЗП!")
+
+def setlimit_command(update: Update, context: CallbackContext):
+    text = update.message.text.replace("/setlimit", "").strip()
+    try:
+        category, value = text.split()
+        value = float(value)
+        limits_sheet.append_row([category, value])
+        update.message.reply_text(f"📌 Ліміт {value:.0f} грн встановлено для '{category}'")
+    except:
+        update.message.reply_text("📌 Формат: /setlimit категорія сума\nПриклад: /setlimit продукти 7000")
 
 def start(update: Update, context: CallbackContext):
     update.message.reply_text("👋 Привіт! Напиши суму, наприклад '1000' або натисни /report")
@@ -188,28 +208,14 @@ def start(update: Update, context: CallbackContext):
 def ping(update: Update, context: CallbackContext):
     update.message.reply_text("✅ Я на зв'язку!")
 
-def salary(update: Update, context: CallbackContext):
-    user_id = update.message.from_user.id
-    pending_state[user_id] = {"step": "await_category", "amount": "0"}
-    update.message.reply_text("💼 Введи суму ЗП (запишемо як прихід):")
-
-def setlimit(update: Update, context: CallbackContext):
-    try:
-        parts = update.message.text.split(" ", 2)
-        category, value = parts[1], float(parts[2])
-        limits_sheet.append_row([category, value])
-        update.message.reply_text(f"✅ Ліміт {value} грн встановлено для категорії '{category}'")
-    except:
-        update.message.reply_text("⚠️ Формат: /setlimit <категорія> <сума>")
-
 def main():
     updater = Updater(os.environ["BOT_TOKEN"], use_context=True)
     dp = updater.dispatcher
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("report", report_command))
     dp.add_handler(CommandHandler("ping", ping))
-    dp.add_handler(CommandHandler("report", report))
-    dp.add_handler(CommandHandler("salary", salary))
-    dp.add_handler(CommandHandler("setlimit", setlimit))
+    dp.add_handler(CommandHandler("salary", salary_command))
+    dp.add_handler(CommandHandler("setlimit", setlimit_command))
     dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
     updater.start_polling()
     updater.idle()
